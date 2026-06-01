@@ -1,0 +1,11 @@
+node_modules/
+dist/
+
+server/data/uploads/
+server/data/outputs/
+server/data/temp/
+server/data/music/
+
+test-media/
+*.log
+
