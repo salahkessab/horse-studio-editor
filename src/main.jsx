@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-const apiBase = "http://127.0.0.1:5174";
+const apiBase = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
 const resolutionLabel = "1080 x 1920";
 const automaticSettings = {
   targetDuration: 35,
