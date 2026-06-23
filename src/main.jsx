@@ -329,10 +329,26 @@ function FinalVideoCard({ group, videosById, onAddVideos, disabled }) {
             <X size={16} />
             This final video is shorter than the 31-second target. Add more clips to this same final video.
           </div>
-          <button className="secondary fill-button" type="button" onClick={() => onAddVideos(group.id)} disabled={disabled}>
-            <Upload size={16} />
-            {disabled ? "Wait for current exports" : "Add videos to this final video"}
-          </button>
+          {disabled ? (
+            <button className="secondary fill-button" type="button" disabled>
+              <Upload size={16} />
+              Wait for current exports
+            </button>
+          ) : (
+            <label className="secondary fill-button file-label">
+              <Upload size={16} />
+              Add videos to this final video
+              <input
+                type="file"
+                accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
+                multiple
+                onChange={(event) => {
+                  onAddVideos(group.id, event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+          )}
         </div>
       )}
 
@@ -395,6 +411,10 @@ function App() {
   function openUpload(targetGroupId = null) {
     uploadTargetGroup.current = targetGroupId;
     fileInput.current?.click();
+  }
+
+  function addVideosToGroup(groupId, files) {
+    uploadFiles(files, groupId);
   }
 
   async function waitForJob(jobId, groupId) {
@@ -710,7 +730,7 @@ function App() {
                 key={group.id}
                 group={group}
                 videosById={videosById}
-                onAddVideos={openUpload}
+                onAddVideos={addVideosToGroup}
                 disabled={uploading || batchBusy}
               />
             ))}
