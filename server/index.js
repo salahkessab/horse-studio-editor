@@ -25,6 +25,7 @@ await Promise.all([uploadDir, outputDir, tempDir].map((dir) => fsp.mkdir(dir, { 
 const app = express();
 const port = Number(process.env.PORT || 5174);
 const maxFileSize = 750 * 1024 * 1024;
+const maxUploadVideos = 120;
 const allowedExtensions = new Set([".mp4", ".mov", ".webm"]);
 const jobs = new Map();
 
@@ -312,7 +313,7 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-app.post("/api/upload", upload.array("videos", 50), async (req, res, next) => {
+app.post("/api/upload", upload.array("videos", maxUploadVideos), async (req, res, next) => {
   try {
     if (!req.files?.length) {
       res.status(400).json({ error: "No videos uploaded." });
@@ -404,7 +405,13 @@ app.delete("/api/project", async (_req, res) => {
 });
 
 app.use((error, _req, res, _next) => {
-  const message = error.code === "LIMIT_FILE_SIZE" ? "Video too large. Maximum size is 750 MB per file." : error.message;
+  let message = error.message;
+  if (error.code === "LIMIT_FILE_SIZE") {
+    message = "Video too large. Maximum size is 750 MB per file.";
+  }
+  if (error.code === "LIMIT_UNEXPECTED_FILE") {
+    message = `Too many videos in one upload. Upload ${maxUploadVideos} videos or fewer at once.`;
+  }
   res.status(400).json({ error: message || "Request failed." });
 });
 
