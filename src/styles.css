@@ -689,6 +689,16 @@ h3 {
   color: #ffe6b8;
 }
 
+.short-fix {
+  display: grid;
+  gap: 10px;
+}
+
+.fill-button {
+  width: fit-content;
+  padding: 0 16px;
+}
+
 .progress-box {
   display: grid;
   gap: 8px;

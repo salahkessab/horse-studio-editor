@@ -16,8 +16,8 @@ import "./styles.css";
 const apiBase = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
 const resolutionLabel = "1080 x 1920";
 const automaticSettings = {
-  targetDuration: 35,
-  maxDuration: 50,
+  targetDuration: 31,
+  maxDuration: 35,
   minVideos: 2,
   maxVideos: 999,
   allowShort: true
@@ -77,8 +77,8 @@ function buildAutoGroups(videos, settings, startIndex = 0) {
   let index = 0;
   const min = Math.max(1, Number(settings.minVideos || 2));
   const max = Math.max(min, Number(settings.maxVideos || 999));
-  const target = Math.max(0, Number(settings.targetDuration || 35));
-  const maxDuration = Math.max(target, Number(settings.maxDuration || 50));
+  const target = Math.max(0, Number(settings.targetDuration || 31));
+  const maxDuration = Math.max(target, Number(settings.maxDuration || 35));
 
   while (index < videos.length) {
     const groupVideoIds = [];
@@ -135,6 +135,59 @@ function buildAutoGroups(videos, settings, startIndex = 0) {
   return groups;
 }
 
+function chooseVideosToFillShortGroup(currentDuration, candidates, settings) {
+  const target = Math.max(0, Number(settings.targetDuration || 31));
+  const maxDuration = Math.max(target, Number(settings.maxDuration || 35));
+  if (currentDuration >= target) return { fillVideos: [], remainingVideos: candidates };
+
+  let best = null;
+  const searchLimit = Math.min(candidates.length, 12);
+
+  function consider(indices) {
+    const addedDuration = indices.reduce((sum, index) => sum + Number(candidates[index].duration || 0), 0);
+    const finalDuration = currentDuration + addedDuration;
+    const inRange = finalDuration >= target && finalDuration <= maxDuration;
+    if (!inRange) return;
+
+    if (
+      !best ||
+      indices.length < best.indices.length ||
+      (indices.length === best.indices.length && finalDuration < best.finalDuration)
+    ) {
+      best = { indices: [...indices], finalDuration };
+    }
+  }
+
+  function walk(start, picked) {
+    if (picked.length > 0) consider(picked);
+    if (picked.length >= 6 || start >= searchLimit) return;
+    for (let index = start; index < searchLimit; index += 1) {
+      picked.push(index);
+      walk(index + 1, picked);
+      picked.pop();
+    }
+  }
+
+  walk(0, []);
+
+  if (!best) {
+    let total = currentDuration;
+    const indices = [];
+    for (let index = 0; index < candidates.length; index += 1) {
+      indices.push(index);
+      total += Number(candidates[index].duration || 0);
+      if (total >= target) break;
+    }
+    best = { indices, finalDuration: total };
+  }
+
+  const fillSet = new Set(best.indices);
+  return {
+    fillVideos: candidates.filter((_, index) => fillSet.has(index)),
+    remainingVideos: candidates.filter((_, index) => !fillSet.has(index))
+  };
+}
+
 function getExpectedDuration(totalDuration, trim) {
   return trim.enabled ? Math.min(totalDuration, Number(trim.duration || 0)) : totalDuration;
 }
@@ -178,7 +231,7 @@ function validateGroups(groups, videosById, settings, trim) {
     }
     const totalDuration = group.videoIds.reduce((sum, videoId) => sum + (videosById.get(videoId)?.duration || 0), 0);
     const expectedDuration = getExpectedDuration(totalDuration, trim);
-    if (!settings.allowShort && expectedDuration < Number(settings.targetDuration || 35)) {
+    if (!settings.allowShort && expectedDuration < Number(settings.targetDuration || 31)) {
       errors.push(`${group.name} is shorter than the target duration.`);
     }
   }
@@ -211,7 +264,7 @@ function SourceCard({ video }) {
   );
 }
 
-function FinalVideoCard({ group, videosById }) {
+function FinalVideoCard({ group, videosById, onAddVideos, disabled }) {
   const groupVideos = group.videoIds.map((videoId) => videosById.get(videoId)).filter(Boolean);
   const totalDuration = groupVideos.reduce((sum, video) => sum + video.duration, 0);
   const expectedDuration = getExpectedDuration(totalDuration, automaticTrim);
@@ -271,9 +324,15 @@ function FinalVideoCard({ group, videosById }) {
       </div>
 
       {shortWarning && (
-        <div className="notice warn">
-          <X size={16} />
-          This final video is shorter than the 35-second target, but it is still exported.
+        <div className="short-fix">
+          <div className="notice warn">
+            <X size={16} />
+            This final video is shorter than the 31-second target. Add more clips to this same final video.
+          </div>
+          <button className="secondary fill-button" type="button" onClick={() => onAddVideos(group.id)} disabled={disabled}>
+            <Upload size={16} />
+            {disabled ? "Wait for current exports" : "Add videos to this final video"}
+          </button>
         </div>
       )}
 
@@ -314,6 +373,7 @@ function FinalVideoCard({ group, videosById }) {
 
 function App() {
   const fileInput = useRef(null);
+  const uploadTargetGroup = useRef(null);
   const [videos, setVideos] = useState([]);
   const [groups, setGroups] = useState([]);
   const [status, setStatus] = useState("");
@@ -330,6 +390,11 @@ function App() {
     setGroups((current) => current.map((group) => (
       group.id === groupId ? updater(group) : group
     )));
+  }
+
+  function openUpload(targetGroupId = null) {
+    uploadTargetGroup.current = targetGroupId;
+    fileInput.current?.click();
   }
 
   async function waitForJob(jobId, groupId) {
@@ -406,21 +471,25 @@ function App() {
     setStatus("All final videos are ready to download.");
   }
 
-  async function uploadFiles(files) {
+  async function uploadFiles(files, targetGroupId = null) {
     const accepted = [...files].filter((file) => /\.(mp4|mov|webm)$/i.test(file.name));
     if (accepted.length !== files.length) {
       setError("Unsupported video format. Use MP4, MOV, or WEBM.");
       return;
     }
-    if (accepted.length < 2) {
+    if (!targetGroupId && accepted.length < 2) {
       setError("Upload at least 2 videos.");
+      return;
+    }
+    if (targetGroupId && accepted.length < 1) {
+      setError("Upload at least 1 video to add to this final video.");
       return;
     }
 
     setUploading(true);
     setBatchBusy(true);
     setError("");
-    setStatus("Reading uploaded videos and creating new final groups...");
+    setStatus(targetGroupId ? "Reading videos and adding them to the short final video..." : "Reading uploaded videos and creating new final groups...");
     try {
       const form = new FormData();
       accepted.forEach((file) => form.append("videos", file));
@@ -434,12 +503,38 @@ function App() {
         }
       }));
       const mergedVideos = [...videos, ...uploadedVideos];
-      const newGroups = buildAutoGroups(uploadedVideos, automaticSettings, groups.length);
-      const mergedGroups = [...groups, ...newGroups];
-      setVideos(mergedVideos);
-      setGroups(mergedGroups);
-      setStatus(`Created ${newGroups.length} new final videos automatically. Exporting now...`);
-      await generateAllVideos(newGroups, mergedVideos);
+      if (targetGroupId) {
+        const targetGroup = groups.find((group) => group.id === targetGroupId);
+        if (!targetGroup) throw new Error("This final video group was not found.");
+
+        const currentDuration = targetGroup.videoIds.reduce((sum, videoId) => sum + (videosById.get(videoId)?.duration || 0), 0);
+        const { fillVideos, remainingVideos } = chooseVideosToFillShortGroup(currentDuration, uploadedVideos, automaticSettings);
+        if (!fillVideos.length) throw new Error("No videos were added to this final video.");
+
+        const updatedTargetGroup = {
+          ...targetGroup,
+          videoIds: [...targetGroup.videoIds, ...fillVideos.map((video) => video.id)],
+          result: null,
+          job: null,
+          error: ""
+        };
+        const newGroups = remainingVideos.length ? buildAutoGroups(remainingVideos, automaticSettings, groups.length) : [];
+        const mergedGroups = groups
+          .map((group) => (group.id === targetGroupId ? updatedTargetGroup : group))
+          .concat(newGroups);
+
+        setVideos(mergedVideos);
+        setGroups(mergedGroups);
+        setStatus(`Added ${fillVideos.length} video${fillVideos.length === 1 ? "" : "s"} to ${targetGroup.name}. Re-exporting now...`);
+        await generateAllVideos([updatedTargetGroup, ...newGroups], mergedVideos);
+      } else {
+        const newGroups = buildAutoGroups(uploadedVideos, automaticSettings, groups.length);
+        const mergedGroups = [...groups, ...newGroups];
+        setVideos(mergedVideos);
+        setGroups(mergedGroups);
+        setStatus(`Created ${newGroups.length} new final videos automatically. Exporting now...`);
+        await generateAllVideos(newGroups, mergedVideos);
+      }
     } catch (err) {
       setError(err.message);
       setStatus("");
@@ -524,7 +619,7 @@ function App() {
             <span>{completedGroups.length} ready to download</span>
           </div>
           <div className="group-toolbar">
-            <button className="primary" type="button" onClick={() => fileInput.current?.click()} disabled={uploading || batchBusy}>
+            <button className="primary" type="button" onClick={() => openUpload()} disabled={uploading || batchBusy}>
               {uploading || batchBusy ? <Loader2 className="spin" size={16} /> : <Upload size={16} />}
               Upload Multi Video
             </button>
@@ -549,19 +644,24 @@ function App() {
               uploadFiles(event.dataTransfer.files);
             }}
             onDragOver={(event) => event.preventDefault()}
-            onClick={() => fileInput.current?.click()}
+            onClick={() => openUpload()}
           >
             <input
               ref={fileInput}
               type="file"
               accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
               multiple
-              onChange={(event) => uploadFiles(event.target.files)}
+              onChange={(event) => {
+                const targetGroupId = uploadTargetGroup.current;
+                uploadTargetGroup.current = null;
+                uploadFiles(event.target.files, targetGroupId);
+                event.target.value = "";
+              }}
             />
             {uploading ? <Loader2 className="spin" size={34} /> : <Upload size={34} />}
             <div>
               <h2>Drop videos here or browse</h2>
-              <p>Upload 2 or more MP4, MOV, or WEBM files. Each upload batch becomes new final video groups, aims for about 35 to 50 seconds when possible, and exports right away without removing your previous results.</p>
+              <p>Upload 2 or more MP4, MOV, or WEBM files. Each upload batch becomes new final video groups, aims for about 31 to 35 seconds when possible, and exports right away without removing your previous results.</p>
             </div>
           </div>
 
@@ -600,7 +700,7 @@ function App() {
             <div className="section-meta">
               <span>{groups.length} groups</span>
               <span>{completedGroups.length} ready</span>
-              <span>35s to 50s target</span>
+              <span>31s to 35s target</span>
             </div>
           </div>
 
@@ -610,6 +710,8 @@ function App() {
                 key={group.id}
                 group={group}
                 videosById={videosById}
+                onAddVideos={openUpload}
+                disabled={uploading || batchBusy}
               />
             ))}
           </div>
