@@ -472,9 +472,9 @@ function App() {
     }));
   }
 
-  async function generateAllVideos(groupList, videoList) {
+  async function generateAllVideos(groupList, videoList, validationGroups = groupList) {
     const currentVideosById = new Map(videoList.map((video) => [video.id, video]));
-    const freshValidation = validateGroups(groupList, currentVideosById, automaticSettings, automaticTrim);
+    const freshValidation = validateGroups(validationGroups, currentVideosById, automaticSettings, automaticTrim);
     if (freshValidation.errors.length) {
       throw new Error(freshValidation.errors[0]);
     }
@@ -546,14 +546,14 @@ function App() {
         setVideos(mergedVideos);
         setGroups(mergedGroups);
         setStatus(`Added ${fillVideos.length} video${fillVideos.length === 1 ? "" : "s"} to ${targetGroup.name}. Re-exporting now...`);
-        await generateAllVideos([updatedTargetGroup, ...newGroups], mergedVideos);
+        await generateAllVideos([updatedTargetGroup, ...newGroups], mergedVideos, mergedGroups);
       } else {
         const newGroups = buildAutoGroups(uploadedVideos, automaticSettings, groups.length);
         const mergedGroups = [...groups, ...newGroups];
         setVideos(mergedVideos);
         setGroups(mergedGroups);
         setStatus(`Created ${newGroups.length} new final videos automatically. Exporting now...`);
-        await generateAllVideos(newGroups, mergedVideos);
+        await generateAllVideos(newGroups, mergedVideos, mergedGroups);
       }
     } catch (err) {
       setError(err.message);
@@ -637,6 +637,7 @@ function App() {
             <span>{videos.length} source videos</span>
             <span>{groups.length} final videos</span>
             <span>{completedGroups.length} ready to download</span>
+            <span>{validation.duplicates.length ? "Duplicate source found" : "No duplicate source videos"}</span>
           </div>
           <div className="group-toolbar">
             <button className="primary" type="button" onClick={() => openUpload()} disabled={uploading || batchBusy}>
